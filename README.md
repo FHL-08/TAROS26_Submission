@@ -12,7 +12,7 @@ If you use this code in your research, please cite the following paper:
 @inproceedings{Lawan2025ECC,
   author    = {Faisal Lawan, Joaquin Carrasco Gomez, Weishu Zhan, Wei Pan},
   title     = {Torque-Level Formation Control of Nonholonomic Wheeled Mobile Robots via Consensus-Based Feedback Linearised MPC},
-  booktitle = {Proceedings of the European Control Conference (ECC)},
+  booktitle = {Proceedings of Towards Autonomous Robotic Systems (TAROS)},
   year      = {2026},
 }
 ```
