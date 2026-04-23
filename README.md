@@ -18,7 +18,7 @@ If you use this code in your research, please cite the following paper:
 ```
 
 ## Overview
-This repository contains the MATLAB simulation code for the results presented in the ECC 2025 submission titled "Torque-Level Formation Control of Nonholonomic Wheeled Mobile Robots via Consensus-Based Feedback Linearised MPC". The code implements and benchmarks four different distributed model predictive control strategies for the formation control of nonholonomic wheeled mobile robots operating at the torque level.
+This repository contains the MATLAB simulation code for the results presented in the TAROS 2026 submission titled "Constrained Torque-Level Formation Control of Nonholonomic Wheeled Mobile Robots via Consensus-Based Feedback Linearised MPC". The code implements and benchmarks four different distributed model predictive control strategies for the formation control of nonholonomic wheeled mobile robots operating at the torque level.
 
 The controllers included are:
 1. **LMPC**: Jacobian-based Linearised MPC.
@@ -73,7 +73,7 @@ Please ensure all required toolboxes are installed and added to the MATLAB path.
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-Copyright &copy; 2025 Faisal Lawan.
+Copyright &copy; 2026 Faisal Lawan.
 
 ## Contact
 For questions regarding the paper or the code, please refer to the contact information provided in the conference paper.
