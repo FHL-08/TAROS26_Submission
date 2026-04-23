@@ -9,9 +9,9 @@
 If you use this code in your research, please cite the following paper:
 
 ```bibtex
-@inproceedings{Lawan2025ECC,
+@inproceedings{Lawan2026TAROS,
   author    = {Faisal Lawan, Joaquin Carrasco Gomez, Weishu Zhan, Wei Pan},
-  title     = {Torque-Level Formation Control of Nonholonomic Wheeled Mobile Robots via Consensus-Based Feedback Linearised MPC},
+  title     = {Constrained Torque-Level Formation Control of Nonholonomic Wheeled Mobile Robots via Consensus-Based Feedback Linearised MPC},
   booktitle = {Proceedings of Towards Autonomous Robotic Systems (TAROS)},
   year      = {2026},
 }
