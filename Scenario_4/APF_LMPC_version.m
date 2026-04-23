@@ -171,7 +171,7 @@ dx_state_func = Function('dx_state_func', {x_state, tau}, {dx_state});
 volts_ub = U_0; % Volts
 volts_lb = -U_0; % Volts
 forward_vel = -C*(A\B)*[volts_ub; volts_ub];
-wheel_vel_ub = full(inv_S_y_q_func(0)*forward_vel);
+wheel_vel_ub = [20; 20];
 wheel_vel_lb = -wheel_vel_ub;
 max_torque = 0.25;
 torque_ub = max_torque*ones(2, 1);
@@ -183,7 +183,7 @@ adjacency = [0 1 1;
              1 0 1;
              1 1 0]; % adjacency matrix (consensus)
 vertex_degrees = sum(adjacency, 2);
-leader_neighbour = [1 1 1]; % leader neighbourhood vector (consensus)
+leader_neighbour = [1 0 0]; % leader neighbourhood vector (consensus)
 switch ACTIVATE_CONSENSUS
     case 'inactive'
         adjacency = zeros(mrs_size);  % adjacency matrix (leader-follower)
@@ -280,9 +280,9 @@ dq_next_k = zeros(dim_state, mrs_size); % initial system velocity
 robot_accelerations = zeros(dim_state-1, mrs_size);
 
 %%% cost weighting matrices (tune)
-Q = diag([55, 55, 35, 35]);
+Q = diag([50, 50, 35, 35]);
 Q_bar = sparse(kron(eye(N), Q));
-R = 12.9271*10*eye(dim_state-1);
+R = 235*eye(dim_state-1);
 R_bar = sparse(kron(eye(N), R));
 M = [zeros(2, 3), eye(2)];
 M_bar = sparse(kron(eye(N), M));
@@ -371,31 +371,43 @@ for j=1:length(k)
     rho_0 = formation_radius + d_safe;
     goal_obs_dist = min(vecnorm(obstacle_array - goal_position, 2, 1));
 
-    k_rep = 1;
-    term_a = 2*goal_obs_dist/(27*rho_0^3);
-    term_b = 2/(3*rho_0^2);
-    k_att = ceil(k_rep*(term_a - term_b + (term_b/3 + term_a)*sqrt(1 + 3*(rho_0/goal_obs_dist))));
-    F_att = k_att*(goal_position - To_cartesian*q_l);
-
-    [min_robot_obs_dist, obs_index] = min(vecnorm(obstacle_array - To_cartesian*q_l, 2, 1));
-    if (min_robot_obs_dist <= rho_0)
-        rho_vc_goal = norm(goal_position - To_cartesian*q_l);
-        F_rep_1 = k_rep*(1/min_robot_obs_dist - 1/rho_0)*((rho_vc_goal^2)/(min_robot_obs_dist^3));
-        F_rep_2 = -k_rep*((1/min_robot_obs_dist - 1/rho_0)^2);
-        F_rep = F_rep_1*(To_cartesian*q_l - obstacle_array(:, obs_index))...
-                + F_rep_2*(To_cartesian*q_l - goal_position);
-    else
-        F_rep = zeros(dim_state-1, 1);
+    % --- REFERENCE GENERATOR: MODIFIED APF (Section VII-A) ---
+    k_att = 0.8;
+    k_rep = 0.5;
+    P_vc = q_l(1:2);
+    d_goal = norm(goal_position - P_vc);
+    F_att = k_att * (goal_position - P_vc);
+    
+    F_rep = [0;0];
+    dists = vecnorm(obstacle_array - P_vc, 2, 1);
+    idx = find(dists < rho_0);
+    
+    for idj = idx
+        d = dists(idj);
+        grad_d = (P_vc - obstacle_array(:, idj)) / d;
+        F_rep = F_rep + k_rep * (1/d - 1/rho_0) * (d_goal^2 / d^3) * grad_d ...
+                      - k_rep * (1/d - 1/rho_0)^2 * (P_vc - goal_position);
     end
+    F_total = F_att + F_rep;
+    
+    % Project to body frame for v_ref and w_ref
+    F_body = [cos(q_l(3)) sin(q_l(3)); 
+             -sin(q_l(3)) cos(q_l(3))] * F_total;
 
-    F_total = 0.02*(F_att + F_rep);
-    velocity_vector = full((R_theta_func(q_l(3))')*F_total);
-    v_l(1, j) = velocity_vector(1);
-    v_l(2, j) = velocity_vector(2)/l_T;
+    v_ref = 0.2 * F_body(1);
+    w_ref = 0.2 * F_body(2);
+
+    v_l(1, j) = v_ref;
+    v_l(2, j) = w_ref;
+    
+    % Update Virtual Centre
+    dp_vc = [cos(q_l(3)) -sin(q_l(3)); 
+             sin(q_l(3))  cos(q_l(3))]*[v_ref; l_T*w_ref];
+    dq_l = [dp_vc; 
+            w_ref];
 
     q_l_solution = q_solver('x0', q_l, 'p', v_l(:, j));
     q_l = full(q_l_solution.xf);
-    dq_l = R_q_func(q_l)*v_l(:, j);
     p_l(:, j) = q_l;
     dp_l(:, j) = full(dq_l);
     ddp_l(:, j) = zeros(dim_state, 1);
@@ -571,8 +583,7 @@ avg_energy_consumed = mean(squeeze(sqrt(integral_of_norm_torques)));
 TV = sum(abs(diff(tau_library))); % Total Variation
 avg_TV = mean(squeeze(TV));
 
-disp('Controller Metrics:');
-disp('Formation Tracking [m] | Avg solver time [ms] | Avg Energy Consumed [Nm] | Avg Total Variation [Nm]');
+disp('Controller Metrics:')
 disp([avg_consensus_error, avg_solver_time, avg_energy_consumed, avg_TV]);
 
 %% Plot Results
@@ -600,6 +611,30 @@ rectangle('Position', [p_obs_4(1)-obstacle_radius,...
                        2*obstacle_radius, 2*obstacle_radius],...
                       'Curvature', [1, 1], 'FaceColor',[0 0 0]);
 
+rectangle('Position', [q_i_library(1,1,1)-robot_radius,...
+           q_i_library(2,1,1)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[1 0 0]);
+plot([q_i_library(1,1,1)+robot_radius*cos(q_i_library(3,1,1));q_i_library(1,1,1)],...
+      [q_i_library(2,1,1)+robot_radius*sin(q_i_library(3,1,1));q_i_library(2,1,1)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
+
+rectangle('Position', [q_i_library(1,1,2)-robot_radius,...
+           q_i_library(2,1,2)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[0 0 1]);
+plot([q_i_library(1,1,2)+robot_radius*cos(q_i_library(3,1,2));q_i_library(1,1,2)],...
+      [q_i_library(2,1,2)+robot_radius*sin(q_i_library(3,1,2));q_i_library(2,1,2)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
+
+rectangle('Position', [q_i_library(1,1,3)-robot_radius,...
+           q_i_library(2,1,3)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[0 1 0]);
+plot([q_i_library(1,1,3)+robot_radius*cos(q_i_library(3,1,3));q_i_library(1,1,3)],...
+      [q_i_library(2,1,3)+robot_radius*sin(q_i_library(3,1,3));q_i_library(2,1,3)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
+
 cord1x = reshape(q_i_library(1, 1, 1:3), [], 1);
 cord1y = reshape(q_i_library(2, 1, 1:3), [], 1);
 plot([cord1x; cord1x(1); p_l(1, 1)], [cord1y; cord1y(1); p_l(2, 1)], '.-',...
@@ -608,21 +643,36 @@ plot([cord1x; cord1x(1); p_l(1, 1)], [cord1y; cord1y(1); p_l(2, 1)], '.-',...
 plot(nan, nan, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 10);
 plot(nan, nan, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 10);
 plot(nan, nan, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 10);
+plot(nan, nan, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 10);
 
-plot(goal_position(1), goal_position(2),'rp', 'MarkerSize', 8);
-plot(initial_position(1), initial_position(2),'bp', 'MarkerSize', 8);
+orange = [0.8500 0.3250 0.0980];
+plot(initial_position(1), initial_position(2),'p', 'MarkerSize', 15, 'MarkerFaceColor', orange,...
+                                        'MarkerEdgeColor', orange);
+plot(goal_position(1), goal_position(2),'mp', 'MarkerSize', 15, 'MarkerFaceColor', 'm');
 
-time = int32(1*length(k)/5);
-cord1x = reshape(q_i_library(1, time, 1:3), [], 1);
-cord1y = reshape(q_i_library(2, time, 1:3), [], 1);
-plot([cord1x; cord1x(1); p_l(1, time)], [cord1y; cord1y(1); p_l(2, time)], '.-',...
-    'Color', [0.5, 0.5, 0.5, 0.5],'MarkerSize', 10, 'LineWidth', 2);
+rectangle('Position', [q_i_library(1,length(k),1)-robot_radius,...
+           q_i_library(2,length(k),1)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[1 0 0]);
+plot([q_i_library(1,length(k),1)+robot_radius*cos(q_i_library(3,length(k),1));q_i_library(1,length(k),1)],...
+      [q_i_library(2,length(k),1)+robot_radius*sin(q_i_library(3,length(k),1));q_i_library(2,length(k),1)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
 
-time = int32(3.5*length(k)/5);
-cord1x = reshape(q_i_library(1, time, 1:3), [], 1);
-cord1y = reshape(q_i_library(2, time, 1:3), [], 1);
-plot([cord1x; cord1x(1); p_l(1, time)], [cord1y; cord1y(1); p_l(2, time)], '.-',...
-    'Color', [0.5, 0.5, 0.5, 0.5],'MarkerSize', 10, 'LineWidth', 2);
+rectangle('Position', [q_i_library(1,length(k),2)-robot_radius,...
+           q_i_library(2,length(k),2)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[0 0 1]);
+plot([q_i_library(1,length(k),2)+robot_radius*cos(q_i_library(3,length(k),2));q_i_library(1,length(k),2)],...
+      [q_i_library(2,length(k),2)+robot_radius*sin(q_i_library(3,length(k),2));q_i_library(2,length(k),2)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
+
+rectangle('Position', [q_i_library(1,length(k),3)-robot_radius,...
+           q_i_library(2,length(k),3)-robot_radius,...
+           2*robot_radius, 2*robot_radius],...
+          'Curvature', [1, 1], 'FaceColor',[0 1 0]);
+plot([q_i_library(1,length(k),3)+robot_radius*cos(q_i_library(3,length(k),3));q_i_library(1,length(k),3)],...
+      [q_i_library(2,length(k),3)+robot_radius*sin(q_i_library(3,length(k),3));q_i_library(2,length(k),3)],...
+      'y','LineWidth',1.5, 'HandleVisibility','off');
 
 cord1x = reshape(q_i_library(1, length(k), 1:3), [], 1);
 cord1y = reshape(q_i_library(2, length(k), 1:3), [], 1);
@@ -631,7 +681,7 @@ plot([cord1x; cord1x(1); p_l(1, length(k))], [cord1y; cord1y(1); p_l(2, length(k
 hold off;
 legend('show', 'Location', 'northeast');
 legend('Robot 1', 'Robot 2', 'Robot 3', 'Leader', 'formation tracker', ...
-       'Obstacle1', 'Obstacle2', 'Obstacle3', 'Start', 'Goal');
+       'Obstacle1', 'Obstacle2', 'Obstacle3', 'Obstacle4', 'Start', 'Goal');
 title("Robots' Trajectories", 'fontsize', 15);
 xlabel('X coordinate [m]', 'fontSize', 12);
 xlim([-3 8]);

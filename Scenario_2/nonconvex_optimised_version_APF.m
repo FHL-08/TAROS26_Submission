@@ -170,7 +170,7 @@ global_robot_acceleration_func = Function('global_robot_acceleration_func',...
 volts_ub = U_0; % Volts
 volts_lb = -U_0; % Volts
 forward_vel = -C*(A\B)*[volts_ub; volts_ub];
-wheel_vel_ub = full(inv_S_y_q_func(0)*forward_vel);
+wheel_vel_ub = [20; 20];
 wheel_vel_lb = -wheel_vel_ub;
 max_torque = 0.25;
 torque_ub = max_torque*ones(2, 1);
@@ -182,7 +182,7 @@ adjacency = [0 1 1;
              1 0 1;
              1 1 0]; % adjacency matrix (consensus)
 vertex_degrees = sum(adjacency, 2);
-leader_neighbour = [1 1 1]; % leader neighbourhood vector (consensus)
+leader_neighbour = [1 0 0]; % leader neighbourhood vector (consensus)
 switch ACTIVATE_CONSENSUS
     case 'inactive'
         adjacency = zeros(mrs_size);  % adjacency matrix (leader-follower)
@@ -311,7 +311,7 @@ robot_accelerations = zeros(dim_state-1, mrs_size);
 %%% cost weighting matrices (tune)
 S_matrix = [zeros(2), eye(2)];
 Q = diag([50, 50, 35, 35]);
-R = 10*eye(dim_state-1);
+R = 6*eye(dim_state-1);
 R_horizon = sparse(kron(eye(N), R));
 H = [zeros(dim_state-1) eye(dim_state-1);
      zeros((dim_state-1), 2*(dim_state-1))];
@@ -373,9 +373,9 @@ wheeled_vel_library = repmat(zeros(dim_vel, length(k)), 1, 1, mrs_size);
 %%% Define IPOPT options
 opts = struct;
 opts.ipopt.tol = 1e-8; % Tolerance for optimization
-opts.ipopt.constr_viol_tol = 1e-9; % Constraint violation robot_radius
-opts.ipopt.acceptable_tol = 1e-8;
-opts.ipopt.acceptable_constr_viol_tol = 1e-8;
+opts.ipopt.constr_viol_tol = 1e-8; % Constraint violation robot_radius
+opts.ipopt.acceptable_tol = 1e-6;
+opts.ipopt.acceptable_constr_viol_tol = 1e-6;
 opts.ipopt.max_iter = 120;  % Max number of iterations
 opts.ipopt.print_level = 0; % Suppress output (0 for no output)
 opts.print_time = false;
@@ -412,8 +412,8 @@ for z=1:N
 
     torque_var = torque_bound_func(p_diffeomorphism_k_next(3:4), opt_var_z,...
                                    angle, h_vel, h_accel, p_g_i_dis);
-    wheel_bound_var = wheel_vel_bound_func(p_diffeomorphism_predict(3:4),...
-                                           angle_predict, h_vel, p_g_i_dis);
+    wheel_bound_var = wheel_vel_bound_func(p_diffeomorphism_k_next(3:4),...
+                                           angle, h_vel, p_g_i_dis);
 
     torque_constraint_vec((z-1)*(dim_state-1)+1:z*(dim_state-1)) = torque_var;
     wheel_vel_constraint_vec((z-1)*(dim_state-1)+1:z*(dim_state-1)) = wheel_bound_var;
@@ -477,31 +477,43 @@ for j=1:length(k)
     rho_0 = formation_radius + d_safe;
     goal_obs_dist = min(vecnorm(obstacle_array - goal_position, 2, 1));
 
-    k_rep = 1;
-    term_a = 2*goal_obs_dist/(27*rho_0^3);
-    term_b = 2/(3*rho_0^2);
-    k_att = ceil(k_rep*(term_a - term_b + (term_b/3 + term_a)*sqrt(1 + 3*(rho_0/goal_obs_dist))));
-    F_att = k_att*(goal_position - To_cartesian*q_l);
-
-    [min_robot_obs_dist, obs_index] = min(vecnorm(obstacle_array - To_cartesian*q_l, 2, 1));
-    if (min_robot_obs_dist <= rho_0)
-        rho_vc_goal = norm(goal_position - To_cartesian*q_l);
-        F_rep_1 = k_rep*(1/min_robot_obs_dist - 1/rho_0)*((rho_vc_goal^2)/(min_robot_obs_dist^3));
-        F_rep_2 = -k_rep*((1/min_robot_obs_dist - 1/rho_0)^2);
-        F_rep = F_rep_1*(To_cartesian*q_l - obstacle_array(:, obs_index))...
-                + F_rep_2*(To_cartesian*q_l - goal_position);
-    else
-        F_rep = zeros(dim_state-1, 1);
+    % --- REFERENCE GENERATOR: MODIFIED APF (Section VII-A) ---
+    k_att = 0.8;
+    k_rep = 0.5;
+    P_vc = q_l(1:2);
+    d_goal = norm(goal_position - P_vc);
+    F_att = k_att * (goal_position - P_vc);
+    
+    F_rep = [0;0];
+    dists = vecnorm(obstacle_array - P_vc, 2, 1);
+    idx = find(dists < rho_0);
+    
+    for idj = idx
+        d = dists(idj);
+        grad_d = (P_vc - obstacle_array(:, idj)) / d;
+        F_rep = F_rep + k_rep * (1/d - 1/rho_0) * (d_goal^2 / d^3) * grad_d ...
+                      - k_rep * (1/d - 1/rho_0)^2 * (P_vc - goal_position);
     end
+    F_total = F_att + F_rep;
+    
+    % Project to body frame for v_ref and w_ref
+    F_body = [cos(q_l(3)) sin(q_l(3)); 
+             -sin(q_l(3)) cos(q_l(3))] * F_total;
 
-    F_total = 0.02*(F_att + F_rep);
-    velocity_vector = full((R_theta_func(q_l(3))')*F_total);
-    v_l(1, j) = velocity_vector(1);
-    v_l(2, j) = velocity_vector(2)/l_T;
+    v_ref = 0.2 * F_body(1);
+    w_ref = 0.2 * F_body(2);
+
+    v_l(1, j) = v_ref;
+    v_l(2, j) = w_ref;
+    
+    % Update Virtual Centre
+    dp_vc = [cos(q_l(3)) -sin(q_l(3)); 
+             sin(q_l(3))  cos(q_l(3))]*[v_ref; l_T*w_ref];
+    dq_l = [dp_vc; 
+            w_ref];
 
     q_l_solution = q_solver('x0', q_l, 'p', v_l(:, j));
     q_l = full(q_l_solution.xf);
-    dq_l = R_q_func(q_l)*v_l(:, j);
     p_l(:, j) = q_l;
     dp_l(:, j) = full(dq_l);
     ddp_l(:, j) = zeros(dim_state, 1);

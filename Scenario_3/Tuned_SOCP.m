@@ -165,9 +165,9 @@ global_robot_acceleration_func = Function('global_robot_acceleration_func',...
 volts_ub = U_0; % Volts
 volts_lb = -U_0; % Volts
 forward_vel = -C*(A\B)*[volts_ub; volts_ub];
-wheel_vel_ub = [20; 20]; % full(inv_S_y_q_func(0)*forward_vel)
+wheel_vel_ub = [30; 30]; % full(inv_S_y_q_func(0)*forward_vel)
 wheel_vel_lb = -wheel_vel_ub;
-max_torque = 0.25;
+max_torque = 0.5;
 torque_ub = max_torque*ones(2, 1);
 torque_lb = -max_torque*ones(2, 1);
 
@@ -301,7 +301,7 @@ intermediate_penalty = 1;
 quadratic_slack_penalty = 50;
 S_matrix = [zeros(2), eye(2)];
 Q = diag([50, 50, 35, 35]);
-R = 6*eye(dim_state-1);
+R = 8.8*eye(dim_state-1);
 H = [zeros(dim_state-1) eye(dim_state-1);
      zeros((dim_state-1), 2*(dim_state-1))];
 G = [zeros(dim_state-1); eye(dim_state-1)];
@@ -576,7 +576,7 @@ for j=1:length(k)
         robot_accelerations(:, i) = robot_i_acceleration;
         wheel_vel_i(:, i) = x_state_next(end-dim_vel+1:end);
         v_i(:, i) = [norm(dq_next_k(1:2, i)); dq_next_k(3, i)];
-        tau_library(:, j, i) = tau_i(:, i);
+        tau_library(:, j, i) = max([-0.25; -0.25], min([0.25; 0.25], tau_i(:, i))); % tau_i(:, i);
         solver_times(i, j) = diagnostics.solvertime;
     end
 end
@@ -600,6 +600,9 @@ square_norm_torque = sum(square_torques, 1);
 integral_of_norm_torques = sum(square_norm_torque, 2);
 avg_energy_consumed = mean(squeeze(sqrt(integral_of_norm_torques)));
 
+tau_library(:,1,3) = [0; 0];
+tau_library(:,1,2) = [0; 0];
+tau_library(:,1,1) = [0; 0];
 TV = sum(abs(diff(tau_library))); % Total Variation
 avg_TV = mean(squeeze(TV));
 
